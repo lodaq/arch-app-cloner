@@ -44,7 +44,8 @@ def build_bwrap_command(
         # GPU / DRI acceleration
         "--ro-bind-try", "/dev/dri", "/dev/dri",
         "--ro-bind-try", "/sys", "/sys",
-        # Isolated /tmp with X11 socket support
+        # Isolated /tmp with proper 1777 sticky permissions and X11 socket support
+        "--perms", "01777",
         "--tmpfs", "/tmp",
         "--ro-bind-try", "/tmp/.X11-unix", "/tmp/.X11-unix",
         # Isolated home directory
@@ -89,8 +90,9 @@ def build_bwrap_command(
             if Path(host_path).exists():
                 cmd.extend(["--bind", host_path, sandbox_path])
 
-    # Isolated XDG_RUNTIME_DIR: clean tmpfs with only Wayland and Audio bound
+    # Isolated XDG_RUNTIME_DIR: clean tmpfs with strict 0700 permissions with only Wayland and Audio bound
     cmd.extend([
+        "--perms", "0700",
         "--tmpfs", xdg_rt,
         "--ro-bind-try", f"{xdg_rt}/{wl_disp}", f"{xdg_rt}/{wl_disp}",
         "--ro-bind-try", f"{xdg_rt}/pipewire-0", f"{xdg_rt}/pipewire-0",
@@ -109,6 +111,7 @@ def build_bwrap_command(
         "HOME": str(home),
         "USER": user,
         "LOGNAME": user,
+        "TMPDIR": "/tmp",
         "XDG_RUNTIME_DIR": xdg_rt,
         "WAYLAND_DISPLAY": wl_disp,
         "DISPLAY": disp,
