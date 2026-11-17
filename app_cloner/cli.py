@@ -119,6 +119,7 @@ def cmd_create(args: argparse.Namespace, mgr: CloneManager) -> int:
             app_info=app_info,
             clone_name=clone_name,
             clone_id=args.id,
+            exec_cmd=getattr(args, "exec", None),
             badge_color=badge_color,
             badge_text=badge_text,
             share_downloads=args.share_downloads,
@@ -131,6 +132,7 @@ def cmd_create(args: argparse.Namespace, mgr: CloneManager) -> int:
         print(f"  {BOLD}ID:{RESET}           {cfg.id}")
         print(f"  {BOLD}Name:{RESET}         {cfg.clone_name}")
         print(f"  {BOLD}Base App:{RESET}     {cfg.app_name} ({cfg.desktop_id})")
+        print(f"  {BOLD}Command:{RESET}      {cfg.exec_cmd}")
         print(f"  {BOLD}Badge:{RESET}        {cfg.badge_text} [{cfg.badge_color}]")
         print(f"  {BOLD}Data Dir:{RESET}     {mgr._clone_path(cfg.id) / 'data' / 'home'}")
         print(f"  {BOLD}Desktop File:{RESET} {mgr._desktop_file_path(cfg.id)}")
@@ -211,6 +213,43 @@ def cmd_status(args: argparse.Namespace, mgr: CloneManager) -> int:
             pass
     print()
     return 0
+
+
+def cmd_edit(args: argparse.Namespace, mgr: CloneManager) -> int:
+    cfg = mgr.get_clone(args.clone_id)
+    if not cfg:
+        print(f"{RED}Error: Clone '{args.clone_id}' not found.{RESET}")
+        return 1
+
+    share_dl = None
+    if getattr(args, "share_downloads", None) is not None:
+        share_dl = args.share_downloads
+    share_docs = None
+    if getattr(args, "share_documents", None) is not None:
+        share_docs = args.share_documents
+    offline = None
+    if getattr(args, "offline", None) is not None:
+        offline = args.offline
+
+    ok, msg, updated = mgr.update_clone(
+        clone_id=args.clone_id,
+        clone_name=getattr(args, "name", None),
+        exec_cmd=getattr(args, "exec", None),
+        badge_color=getattr(args, "color", None),
+        badge_text=getattr(args, "badge", None),
+        share_downloads=share_dl,
+        share_documents=share_docs,
+        offline_mode=offline,
+    )
+    if ok and updated:
+        print(f"{GREEN}✔ {msg}{RESET}")
+        print(f"  {BOLD}Name:{RESET}     {updated.clone_name}")
+        print(f"  {BOLD}Command:{RESET}  {updated.exec_cmd}")
+        print(f"  {BOLD}Badge:{RESET}    {updated.badge_text} [{updated.badge_color}]")
+        return 0
+    else:
+        print(f"{RED}Failed: {msg}{RESET}")
+        return 1
 
 
 def cmd_reset(args: argparse.Namespace, mgr: CloneManager) -> int:
@@ -315,6 +354,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_create.add_argument("app", help="Application name, binary, or .desktop ID to clone")
     p_create.add_argument("--name", "-n", help="Display name for the clone (e.g. 'Discord - Work')")
     p_create.add_argument("--id", help="Custom identifier for the clone folder")
+    p_create.add_argument("--exec", help="Override executable command (e.g. 'brave https://claude.ai')")
     p_create.add_argument("--color", "-c", default="#3b82f6", help="Badge color hex (e.g. '#3b82f6', '#10b981', '#ef4444')")
     p_create.add_argument("--badge", "-b", help="Short badge label (e.g. 'W', '2', 'DEV')")
     p_create.add_argument("--share-downloads", action="store_true", help="Mount host ~/Downloads into the clone")
@@ -322,6 +362,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     p_create.add_argument("--share-pictures", action="store_true", help="Mount host ~/Pictures into the clone")
     p_create.add_argument("--offline", action="store_true", help="Disable network access inside the clone")
     p_create.add_argument("--env", "-e", action="append", help="Set environment variable (KEY=VALUE)")
+
+    # edit
+    p_edit = subparsers.add_parser("edit", help="Edit settings or command for an existing clone")
+    p_edit.add_argument("clone_id", help="Identifier of the clone to edit")
+    p_edit.add_argument("--name", "-n", help="New display name")
+    p_edit.add_argument("--exec", help="New executable command")
+    p_edit.add_argument("--color", "-c", help="New badge color hex")
+    p_edit.add_argument("--badge", "-b", help="New badge label")
+    p_edit.add_argument("--share-downloads", action=argparse.BooleanOptionalAction, help="Enable/disable ~/Downloads sharing")
+    p_edit.add_argument("--share-documents", action=argparse.BooleanOptionalAction, help="Enable/disable ~/Documents sharing")
+    p_edit.add_argument("--offline", action=argparse.BooleanOptionalAction, help="Enable/disable offline mode")
 
     # run
     p_run = subparsers.add_parser("run", aliases=["launch", "start"], help="Launch a cloned application")
@@ -380,6 +431,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "create": cmd_create,
         "new": cmd_create,
         "add": cmd_create,
+        "edit": cmd_edit,
         "run": cmd_run,
         "launch": cmd_run,
         "start": cmd_run,

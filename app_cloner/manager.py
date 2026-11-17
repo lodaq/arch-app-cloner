@@ -1,6 +1,8 @@
 """Clone lifecycle manager for Arch App Cloner."""
 
 import json
+import os
+import shlex
 import shutil
 import subprocess
 import tarfile
@@ -84,6 +86,7 @@ class CloneManager:
         app_info: AppInfo,
         clone_name: str,
         clone_id: Optional[str] = None,
+        exec_cmd: Optional[str] = None,
         badge_color: str = "#3b82f6",
         badge_text: str = "",
         share_downloads: bool = False,
@@ -127,7 +130,7 @@ class CloneManager:
             id=clone_id,
             app_name=app_info.name,
             desktop_id=app_info.desktop_id,
-            exec_cmd=app_info.clean_exec,
+            exec_cmd=exec_cmd or app_info.clean_exec,
             clone_name=clone_name,
             badge_color=badge_color,
             badge_text=badge_text,
@@ -231,6 +234,16 @@ Exec=xdg-open {clone_home}
         if not config:
             return False, f"Clone '{clone_id}' does not exist.", None
 
+        # Validate that the executable command exists
+        parts = shlex.split(config.exec_cmd) if config.exec_cmd else []
+        main_bin = parts[0] if parts else ""
+        if not (shutil.which(main_bin) or (os.path.isabs(main_bin) and os.path.isfile(main_bin) and os.access(main_bin, os.X_OK))):
+            return False, (
+                f"Cannot launch '{config.clone_name}':\n\n"
+                f"The command '{main_bin}' was not found on your system.\n\n"
+                f"Please install '{config.app_name}' or edit the clone's execution command."
+            ), None
+
         clone_path = self._clone_path(clone_id)
         pid_file = clone_path / "run.pid"
         existing_pid = read_pid_file(pid_file)
@@ -256,7 +269,61 @@ Exec=xdg-open {clone_home}
             )
             return True, f"Launched '{config.clone_name}' successfully.", proc.pid
         except Exception as e:
+            clear_pid_file(pid_file)
             return False, f"Failed to launch clone '{clone_id}': {e}", None
+
+    def update_clone(
+        self,
+        clone_id: str,
+        clone_name: Optional[str] = None,
+        exec_cmd: Optional[str] = None,
+        badge_color: Optional[str] = None,
+        badge_text: Optional[str] = None,
+        share_downloads: Optional[bool] = None,
+        share_documents: Optional[bool] = None,
+        share_pictures: Optional[bool] = None,
+        offline_mode: Optional[bool] = None,
+    ) -> Tuple[bool, str, Optional[CloneConfig]]:
+        """Update settings and configuration for an existing clone."""
+        config = self.get_clone(clone_id)
+        if not config:
+            return False, f"Clone '{clone_id}' not found.", None
+
+        if clone_name:
+            config.clone_name = clone_name
+        if exec_cmd:
+            config.exec_cmd = exec_cmd.strip()
+        if badge_color:
+            config.badge_color = badge_color
+        if badge_text is not None:
+            config.badge_text = badge_text
+        if share_downloads is not None:
+            config.share_downloads = share_downloads
+        if share_documents is not None:
+            config.share_documents = share_documents
+        if share_pictures is not None:
+            config.share_pictures = share_pictures
+        if offline_mode is not None:
+            config.offline_mode = offline_mode
+
+        # Regenerate icon if badge changed
+        if badge_color or badge_text is not None:
+            base_app = find_app(config.desktop_id) or find_app(config.app_name)
+            src_icon = base_app.icon_path if base_app else None
+            create_badged_icon(
+                src_icon_path=src_icon,
+                dest_path=Path(config.icon_path),
+                badge_color=config.badge_color,
+                badge_text=config.badge_text or (config.clone_name[:2].upper() if len(config.clone_name) <= 3 else config.clone_name[:1].upper()),
+                app_name=config.app_name,
+            )
+
+        with open(self._config_path(clone_id), "w", encoding="utf-8") as f:
+            json.dump(config.to_dict(), f, indent=2)
+
+        self._write_desktop_file(config)
+        self._update_desktop_db()
+        return True, f"Clone '{config.clone_name}' updated successfully.", config
 
     def stop(self, clone_id: str) -> Tuple[bool, str]:
         """Stop a running clone instance."""

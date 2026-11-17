@@ -51,6 +51,20 @@ def build_bwrap_command(
         "--bind", str(clone_home_dir), str(home),
     ]
 
+    # Preserved user directories (read-only) for binaries, fonts, and icons
+    for user_ro_path in [
+        home / ".local" / "bin",
+        home / ".cargo" / "bin",
+        home / ".bun" / "bin",
+        home / ".local" / "share" / "fonts",
+        home / ".fonts",
+        home / ".config" / "fontconfig",
+        home / ".local" / "share" / "icons",
+        home / ".icons",
+    ]:
+        if user_ro_path.exists():
+            cmd.extend(["--ro-bind-try", str(user_ro_path), str(user_ro_path)])
+
     # Shared user directories if requested
     if share_downloads:
         host_dl = home / "Downloads"
@@ -91,6 +105,7 @@ def build_bwrap_command(
 
     # Set up clean environment variables
     env_vars = {
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "HOME": str(home),
         "USER": user,
         "LOGNAME": user,
@@ -101,6 +116,7 @@ def build_bwrap_command(
         "XDG_DATA_HOME": str(home / ".local" / "share"),
         "XDG_CACHE_HOME": str(home / ".cache"),
         "XDG_STATE_HOME": str(home / ".local" / "state"),
+        "XDG_DATA_DIRS": os.environ.get("XDG_DATA_DIRS", "/usr/local/share:/usr/share"),
         "PULSE_SERVER": f"unix:{xdg_rt}/pulse/native",
     }
     if custom_env:
@@ -164,6 +180,23 @@ def launch_in_sandbox(
             start_new_session=True,
             close_fds=True,
         )
+
+        # Brief pause to verify the process didn't instantly crash or fail to execute
+        import time
+        time.sleep(0.3)
+        exit_code = process.poll()
+        if exit_code is not None:
+            log_f.close()
+            error_hint = ""
+            if log_file.exists():
+                try:
+                    lines = [ln.strip() for ln in log_file.read_text(encoding="utf-8", errors="ignore").splitlines() if ln.strip()]
+                    if lines:
+                        error_hint = f":\n{lines[-1]}"
+                except Exception:
+                    pass
+            raise RuntimeError(f"Application exited immediately (exit code {exit_code}){error_hint}")
+
         write_pid_file(pid_file, process.pid)
         return process
     else:

@@ -3,11 +3,43 @@
 import glob
 import os
 import re
+import shlex
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from app_cloner.utils import clean_desktop_exec
+
+
+def is_command_available(cmd_name: str) -> bool:
+    """Check if command is an executable file or found in PATH."""
+    if not cmd_name:
+        return False
+    cmd_name = cmd_name.strip()
+    if (cmd_name.startswith('"') and cmd_name.endswith('"')) or (cmd_name.startswith("'") and cmd_name.endswith("'")):
+        cmd_name = cmd_name[1:-1]
+    if os.path.isabs(cmd_name):
+        return os.path.isfile(cmd_name) and os.access(cmd_name, os.X_OK)
+    return shutil.which(cmd_name) is not None
+
+
+def clean_cmd_parts_available(clean_exec: str) -> bool:
+    """Extract primary binary from exec string and verify it is available."""
+    if not clean_exec:
+        return False
+    try:
+        parts = shlex.split(clean_exec)
+        first_token = parts[0] if parts else ""
+    except Exception:
+        first_token = clean_exec.split()[0] if clean_exec else ""
+    # Strip env prefix if exec is like "env FOO=BAR app"
+    if first_token == "env" and len(parts) > 1:
+        for p in parts[1:]:
+            if "=" not in p and not p.startswith("-"):
+                first_token = p
+                break
+    return is_command_available(first_token)
 
 
 @dataclass
@@ -164,9 +196,18 @@ def parse_desktop_file(file_path: Path, icon_resolver: IconResolver) -> Optional
     if data.get("Hidden", "").lower() == "true":
         return None
 
+    # Check TryExec if specified by the desktop entry
+    try_exec = data.get("TryExec")
+    if try_exec and not is_command_available(try_exec):
+        return None
+
     name = data.get("Name")
     exec_cmd = data.get("Exec")
     if not name or not exec_cmd:
+        return None
+
+    clean_exec = clean_desktop_exec(exec_cmd)
+    if not clean_cmd_parts_available(clean_exec):
         return None
 
     # Don't re-index app-cloner clones to prevent clutter

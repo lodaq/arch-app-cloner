@@ -6,7 +6,28 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer, Signal
+# Suppress noisy QtWayland textinput focus warnings on Wayland / Hyprland
+os.environ["QT_LOGGING_RULES"] = (
+    "qt.qpa.wayland.textinput.warning=false;"
+    "qt.qpa.wayland.textinput=false;"
+    "qt.qpa.wayland.warning=false"
+)
+
+from PySide6.QtCore import (
+    QLoggingCategory,
+    QPointF,
+    QRectF,
+    QSize,
+    Qt,
+    QTimer,
+    Signal,
+)
+
+QLoggingCategory.setFilterRules(
+    "qt.qpa.wayland.textinput.warning=false\n"
+    "qt.qpa.wayland.textinput=false\n"
+    "qt.qpa.wayland.warning=false"
+)
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -225,6 +246,16 @@ class CreateCloneDialog(QDialog):
         name_box.addWidget(self.name_input)
         layout.addLayout(name_box)
 
+        # Command to Execute Input
+        exec_box = QVBoxLayout()
+        exec_lbl = QLabel("Command to Execute:")
+        exec_lbl.setStyleSheet("font-weight: 600;")
+        self.exec_input = QLineEdit()
+        self.exec_input.setText(self.app_info.clean_exec)
+        exec_box.addWidget(exec_lbl)
+        exec_box.addWidget(self.exec_input)
+        layout.addLayout(exec_box)
+
         # Badge customization
         badge_box = QVBoxLayout()
         badge_lbl = QLabel("Badge Text (1-3 letters or emoji):")
@@ -336,6 +367,181 @@ class CreateCloneDialog(QDialog):
             pass
 
 
+class EditCloneDialog(QDialog):
+    """Dialog for editing an existing app clone's command, badge, or permissions."""
+
+    def __init__(self, config: CloneConfig, parent=None):
+        super().__init__(parent)
+        self.config = config
+        self.selected_color = config.badge_color
+        self.setWindowTitle(f"Edit Clone: {config.clone_name}")
+        self.setMinimumWidth(540)
+        self.setStyleSheet(DARK_STYLESHEET)
+        self._init_ui()
+
+    def _init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(16)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        # Header preview
+        top_row = QHBoxLayout()
+        self.preview_label = QLabel()
+        self.preview_label.setFixedSize(64, 64)
+        top_row.addWidget(self.preview_label)
+
+        info_box = QVBoxLayout()
+        title_lbl = QLabel(f"<b>Edit {self.config.clone_name}</b>")
+        title_lbl.setStyleSheet("font-size: 16px; color: #f8fafc;")
+        id_lbl = QLabel(f"Clone ID: <code>{self.config.id}</code>  •  Base App: {self.config.app_name}")
+        id_lbl.setStyleSheet("color: #94a3b8; font-size: 12px;")
+        info_box.addWidget(title_lbl)
+        info_box.addWidget(id_lbl)
+        top_row.addLayout(info_box)
+        top_row.addStretch()
+        layout.addLayout(top_row)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #334155;")
+        layout.addWidget(sep)
+
+        # Clone Name Input
+        name_box = QVBoxLayout()
+        name_lbl = QLabel("Clone Display Name:")
+        name_lbl.setStyleSheet("font-weight: 600;")
+        self.name_input = QLineEdit()
+        self.name_input.setText(self.config.clone_name)
+        self.name_input.textChanged.connect(self._update_preview)
+        name_box.addWidget(name_lbl)
+        name_box.addWidget(self.name_input)
+        layout.addLayout(name_box)
+
+        # Executable Command Input
+        exec_box = QVBoxLayout()
+        exec_lbl = QLabel("Command to Execute:")
+        exec_lbl.setStyleSheet("font-weight: 600;")
+        self.exec_input = QLineEdit()
+        self.exec_input.setText(self.config.exec_cmd)
+        exec_sub = QLabel("You can edit the binary or URL (e.g. <code>brave https://claude.ai</code>)")
+        exec_sub.setStyleSheet("color: #94a3b8; font-size: 11px;")
+        exec_box.addWidget(exec_lbl)
+        exec_box.addWidget(self.exec_input)
+        exec_box.addWidget(exec_sub)
+        layout.addLayout(exec_box)
+
+        # Badge customization
+        badge_box = QVBoxLayout()
+        badge_lbl = QLabel("Badge Text (1-3 letters or emoji):")
+        badge_lbl.setStyleSheet("font-weight: 600;")
+        self.badge_input = QLineEdit()
+        self.badge_input.setText(self.config.badge_text)
+        self.badge_input.setMaxLength(4)
+        self.badge_input.textChanged.connect(self._update_preview)
+        badge_box.addWidget(badge_lbl)
+        badge_box.addWidget(self.badge_input)
+        layout.addLayout(badge_box)
+
+        # Badge color presets
+        color_box = QVBoxLayout()
+        color_lbl = QLabel("Badge Color:")
+        color_lbl.setStyleSheet("font-weight: 600;")
+        color_box.addWidget(color_lbl)
+
+        color_row = QHBoxLayout()
+        presets = [
+            ("#3b82f6", "Blue"),
+            ("#10b981", "Green"),
+            ("#f59e0b", "Amber"),
+            ("#ef4444", "Red"),
+            ("#8b5cf6", "Purple"),
+            ("#ec4899", "Pink"),
+            ("#06b6d4", "Cyan"),
+        ]
+        for hex_code, _ in presets:
+            btn = QPushButton()
+            btn.setFixedSize(32, 32)
+            btn.setStyleSheet(f"background-color: {hex_code}; border-radius: 16px; border: 2px solid #1e293b;")
+            btn.clicked.connect(lambda _, c=hex_code: self._set_color(c))
+            color_row.addWidget(btn)
+
+        custom_btn = QPushButton("Custom...")
+        custom_btn.clicked.connect(self._pick_custom_color)
+        color_row.addWidget(custom_btn)
+        color_row.addStretch()
+        color_box.addLayout(color_row)
+        layout.addLayout(color_box)
+
+        # Storage & Permissions
+        opts_box = QVBoxLayout()
+        opts_lbl = QLabel("Storage & Sharing Options:")
+        opts_lbl.setStyleSheet("font-weight: 600;")
+        opts_box.addWidget(opts_lbl)
+
+        self.cb_downloads = QCheckBox("Share host ~/Downloads folder")
+        self.cb_downloads.setChecked(self.config.share_downloads)
+        self.cb_documents = QCheckBox("Share host ~/Documents folder")
+        self.cb_documents.setChecked(self.config.share_documents)
+        self.cb_offline = QCheckBox("Offline Mode (block network access)")
+        self.cb_offline.setChecked(self.config.offline_mode)
+
+        opts_box.addWidget(self.cb_downloads)
+        opts_box.addWidget(self.cb_documents)
+        opts_box.addWidget(self.cb_offline)
+        layout.addLayout(opts_box)
+
+        # Action Buttons
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_box.addWidget(cancel_btn)
+
+        save_btn = QPushButton("Save Changes")
+        save_btn.setProperty("class", "primary")
+        save_btn.clicked.connect(self.accept)
+        btn_box.addWidget(save_btn)
+
+        layout.addLayout(btn_box)
+        self._update_preview()
+
+    def _set_color(self, hex_code: str):
+        self.selected_color = hex_code
+        self._update_preview()
+
+    def _pick_custom_color(self):
+        dlg = QColorDialog(QColor(self.selected_color), self)
+        if dlg.exec():
+            self.selected_color = dlg.selectedColor().name()
+            self._update_preview()
+
+    def _update_preview(self):
+        text = self.badge_input.text().strip()
+        if not text:
+            text = self.name_input.text().strip()[:1].upper() or "2"
+        tmp_preview = Path(f"/tmp/app_cloner_edit_preview_{self.config.id}.png")
+        try:
+            from app_cloner.apps import find_app
+            base_app = find_app(self.config.desktop_id) or find_app(self.config.app_name)
+            src_icon = base_app.icon_path if base_app else None
+            create_badged_icon(
+                src_icon_path=src_icon,
+                dest_path=tmp_preview,
+                badge_color=self.selected_color,
+                badge_text=text,
+                size=128,
+                app_name=self.config.app_name,
+            )
+            pix = QPixmap(str(tmp_preview)).scaled(
+                64, 64, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
+            )
+            self.preview_label.setPixmap(pix)
+            tmp_preview.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 class CloneCardWidget(QFrame):
     """Card representing an active or stopped clone with action buttons."""
 
@@ -344,6 +550,7 @@ class CloneCardWidget(QFrame):
     reset = Signal(str)
     deleted = Signal(str)
     opened = Signal(str)
+    edited = Signal(str)
 
     def __init__(self, config: CloneConfig, status: Dict, parent=None):
         super().__init__(parent)
@@ -429,6 +636,11 @@ class CloneCardWidget(QFrame):
         reset_btn.setToolTip("Clear data & cookies")
         reset_btn.clicked.connect(lambda: self.reset.emit(self.config.id))
         btn_col.addWidget(reset_btn)
+
+        edit_btn = QPushButton("Edit")
+        edit_btn.setToolTip("Edit clone command or settings")
+        edit_btn.clicked.connect(lambda: self.edited.emit(self.config.id))
+        btn_col.addWidget(edit_btn)
 
         del_btn = QPushButton("Delete")
         del_btn.setToolTip("Delete this clone")
@@ -576,6 +788,7 @@ class MainWindow(QMainWindow):
             card.reset.connect(self._on_reset_clone)
             card.deleted.connect(self._on_delete_clone)
             card.opened.connect(self._on_open_folder)
+            card.edited.connect(self._on_edit_clone)
             self.clones_layout.insertWidget(self.clones_layout.count() - 1, card)
 
     def _refresh_clone_statuses_only(self):
@@ -649,6 +862,7 @@ class MainWindow(QMainWindow):
         dlg = CreateCloneDialog(app_info, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             clone_name = dlg.name_input.text().strip() or f"{app_info.name} (Clone)"
+            exec_cmd = dlg.exec_input.text().strip() or app_info.clean_exec
             badge_text = dlg.badge_input.text().strip()
             badge_color = dlg.selected_color
             share_dl = dlg.cb_downloads.isChecked()
@@ -659,6 +873,7 @@ class MainWindow(QMainWindow):
                 cfg = self.mgr.create_clone(
                     app_info=app_info,
                     clone_name=clone_name,
+                    exec_cmd=exec_cmd,
                     badge_color=badge_color,
                     badge_text=badge_text,
                     share_downloads=share_dl,
@@ -677,8 +892,41 @@ class MainWindow(QMainWindow):
     def _on_launch_clone(self, clone_id: str):
         ok, msg, pid = self.mgr.launch(clone_id, detach=True)
         if not ok:
-            QMessageBox.critical(self, "Launch Error", msg)
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Icon.Critical)
+            msg_box.setWindowTitle("Launch Failed")
+            msg_box.setText(f"<b>Could not launch clone:</b><br><br>{msg.replace(chr(10), '<br>')}")
+            btn_edit = msg_box.addButton("Edit Command...", QMessageBox.ButtonRole.ActionRole)
+            msg_box.addButton(QMessageBox.StandardButton.Close)
+            msg_box.exec()
+            if msg_box.clickedButton() == btn_edit:
+                self._on_edit_clone(clone_id)
         self._refresh_clones()
+
+    def _on_edit_clone(self, clone_id: str):
+        cfg = self.mgr.get_clone(clone_id)
+        if not cfg:
+            return
+        dlg = EditCloneDialog(cfg, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            new_name = dlg.name_input.text().strip() or cfg.clone_name
+            new_exec = dlg.exec_input.text().strip() or cfg.exec_cmd
+            new_color = dlg.selected_color
+            new_badge = dlg.badge_input.text().strip()
+            new_dl = dlg.cb_downloads.isChecked()
+            new_docs = dlg.cb_documents.isChecked()
+            new_off = dlg.cb_offline.isChecked()
+            self.mgr.update_clone(
+                clone_id=clone_id,
+                clone_name=new_name,
+                exec_cmd=new_exec,
+                badge_color=new_color,
+                badge_text=new_badge,
+                share_downloads=new_dl,
+                share_documents=new_docs,
+                offline_mode=new_off,
+            )
+            self._refresh_clones()
 
     def _on_stop_clone(self, clone_id: str):
         ok, msg = self.mgr.stop(clone_id)
