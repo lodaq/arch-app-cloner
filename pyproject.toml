@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "arch-app-cloner"
+version = "1.0.0"
+description = "Run multiple isolated instances of any application with separate data, credentials, and custom badges on Arch Linux."
+readme = "README.md"
+authors = [
+    { name = "Arch Linux App Cloner Team" }
+]
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = [
+    "PySide6>=6.5.0",
+]
+
+[project.scripts]
+app-cloner = "app_cloner.cli:main"
+app-cloner-gui = "app_cloner.gui:launch_gui"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app_cloner*"]

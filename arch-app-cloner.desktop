@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=App Cloner
+GenericName=Application Cloner
+Comment=Run multiple isolated instances of applications with separate data and credentials
+Exec=app-cloner-gui
+Icon=app-cloner
+Terminal=false
+Categories=Utility;System;
+StartupWMClass=app-cloner-gui
+Keywords=clone;sandbox;isolate;multi-account;instances;
